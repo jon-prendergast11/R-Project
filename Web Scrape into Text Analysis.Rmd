@@ -1,0 +1,475 @@
+---
+title: "Web scrape text analysis"
+author: "Jon Prendergast"
+date: '2022-03-19'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this R-Markdown file, I will be practicing concepts I've learned Chapter 3 in Tidy Text Mining with R, written by David Robinson and Julia Silge. Instead of exploring Jane Austen and other notable authors provided in the textbook, my analysis will cover live news feeds from 3 separate news sources. The goal in this exercise will be to extract the most meaningful terms being used in each sources, compare them for any overlap or differences in how the ongoing Russia - Ukraine War is being reported.  
+
+The articles used in this analysis are:
+1) Fox 
+Source: https://www.foxnews.com/live-news/ukraine-russia-live-updates-03-29-2022
+
+2) NBC News
+Source: https://www.nbcnews.com/news/world/live-blog/ukraine-russia-war-live-updates-delegations-arrive-peace-talks-n1293490
+
+3) USA Today
+Source: https://www.usatoday.com/story/news/politics/2022/03/29/ukraine-russia-invasion-live-updates/7200444001/
+
+In order to carry out this analysis, I will first need to extract the data from each source, and pull them into separate data frames. The rvest package, created and maintained by Hadley Wickham, contains a variety of R-functions that make this process simple. I'll start with importing these right away.
+
+```{r}
+library(tidyverse)
+library(rvest)
+
+# Create a variable holding the fox news url
+fox_url <- "https://www.foxnews.com/live-news/ukraine-russia-live-updates-03-29-2022"
+
+# use read_html to read in the html used for the webpage
+fox_live_updates_page <- read_html(fox_url)
+
+# using the inspect element on Fox New's page, I found that the live update posts were wrapped in article tags
+posts <- html_elements(fox_live_updates_page,xpath="//article")
+
+# drilling into the summary posts, I could see elements had 'content' labelled classes held each post's summary title
+posts %>%
+  .[1]%>%
+  html_elements("h2.title")%>%
+  html_text()
+
+#within the same content elements, was the text from each summary post
+posts %>%
+  .[1]%>%
+  html_elements("p")%>%
+  html_text()
+
+```
+
+
+```{r}
+# create function to parse each article, and extract title and text 
+parse_fox_posts <- function(nodeset,dataframe){
+  for(i in 1:length(nodeset)){
+    
+    # add title to data frame
+    dataframe[i,"title"] <- nodeset[i] %>%
+      html_elements("h2.title")%>%
+      html_text()
+    
+    # add text content to data frame
+      dataframe[i,"text"] <- nodeset[i] %>%
+      html_elements("p")%>%
+      html_text()%>%
+      str_flatten()
+      
+    # add source to data frame
+      dataframe[i,"source"] <- "fox"
+      
+  }
+  return(dataframe)
+}
+
+# create function to parse each article post, and extract title and text
+parse_nbc_posts <- function(nodeset,dataframe){
+  for(i in 1:length(nodeset)){
+    
+    title <- nodeset[i] %>%
+          html_elements("h2")%>%
+          html_text()%>%
+          toString()
+    
+    text <- nodeset[i] %>%
+          html_elements("p")%>%
+          html_text()%>%
+          toString()
+    
+    source <- "nbc"
+    
+    dataframe <- rbind(dataframe,c(title,text,source))
+  }
+  return(dataframe)
+}
+
+```
+
+
+
+```{r}
+# created empty data frame to be filled with article info from FOX
+df<-tibble(title ="",
+           text = "",
+           source = "")
+
+# Run parse function for fox news site, assign to data frame
+fox_df <- parse_fox_posts(posts,df)
+fox_df
+
+# save data the newly created data frame as an R data structure (RDS)
+# so that the analysis can be run even if the site is taken down
+# saveRDS(fox_df,"FOX News Source")
+
+
+```
+
+
+Next step is to load in data from NBC's live posts
+```{r}
+# nbc live updates page
+nbc_url <- "https://www.nbcnews.com/news/world/live-blog/ukraine-russia-war-live-updates-delegations-arrive-peace-talks-n1293490"
+
+# read in html content
+nbc_page <- read_html(nbc_url)
+```   
+
+
+```{r}
+# obtain live feed body with all title posts and content
+
+# the first child node contains the 'article-hero container' which is the most recent article header with additional styling and formatting for effect.
+
+# the second child node contains the rest of the blog body, which holds the live feed content related to the most recent header, and the rest of the aligned article headers and text
+nbc_live_updates_body <- nbc_page%>%
+  html_elements("div.liveBlog")%>%
+  html_children()
+
+nbc_live_updates_body
+```
+
+
+
+```{r}
+# In the html structure of this live feed, the title of the most recent post is a separate element from the rest of the main body, and will need to be manually extracted and reunited with its body of content
+most_recent_header <- nbc_live_updates_body%>%
+  html_elements("h1")%>%
+  html_text()
+
+# Based on the underlying structure of the webpage, the content associated with the most recent header will need to be manually extracted and aligned with the most recent header 
+most_recent_article_text <- nbc_live_updates_body%>%
+  html_elements("p")%>%
+  .[1:5]%>%
+  html_text()%>%
+  toString()
+
+# add initial title and body text to data frame
+nbc_df <- data.frame(title = most_recent_header,
+                     text = most_recent_article_text,
+                     source = "nbc")
+
+nbc_df
+```
+
+
+Now that the initial extraction of the header and associated paragraph are completed, the rest of the live feed page can be scraped with a the use of a custom R function. 
+```{r}
+
+# create node set containing nbc posts and titles
+nbc_live_blog <- nbc_live_updates_body%>%
+  html_elements("div.live-blog-card")
+
+# run function on nbc_live_blog content, and return new df to nbc_df
+nbc_df <- parse_nbc_posts(nbc_live_blog,nbc_df)
+
+
+# only interested in blog posts with text bodies, not posts with videos or pictures only
+# rows with blank title and non-blank text fields represent pictures
+# rows with non-blank title and blank text fields represent videos
+nbc_df <- nbc_df%>%
+  filter(title!=''& text !='')
+
+nbc_df
+
+# so that the analysis can be run even if the site is taken down
+# saveRDS(nbc_df,"NBC News Source")
+```
+
+USA today is the last source that needs to be scraped before we can begin text analysis
+```{r}
+
+# initialize url
+usa_today_url <- c("https://www.usatoday.com/story/news/politics/2022/03/29/ukraine-russia-invasion-live-updates/7200444001/")
+
+# read html content from webpage
+usa_today_page <- read_html(usa_today_url)
+
+# grab nodesets that hold the h1 and h2 headers  
+post_headers <- usa_today_page %>%
+  html_elements("article.gnt_pr h1,h2")%>%
+  html_text%>%
+  data.frame(title = .,
+             source="usa today")%>%
+  mutate(text = "")
+
+# grab raw paragraph text
+text <-
+usa_today_page %>%
+  html_elements("div.gnt_ar_b")%>%
+  html_children()
+
+
+# need to filter out undesirable tags
+text %>%
+  html_children()%>%
+  .[18]%>%
+  toString()
+  
+# use this to actually assign values to data frame
+# need to come up with list of undesirable tags to exclude
+# Ex: strong 
+text %>%
+  html_children()%>%
+  .[18]%>%
+  html_text%>%
+  toString()
+
+
+# create empty data frame to hold elements that do not have h2 header
+df_test <- data.frame(text = "",tag = "")
+
+for(i in 1:length(text)){
+  
+  # actual text contained in elements  
+  text <- test%>%
+    .[i]%>%
+    html_text()%>%
+    toString  
+    
+  # tag that will be used to filter out unwanted elements
+  tag <- test%>%
+    .[i]%>%
+    toString
+  
+  # dataframe to hold tags and elements  
+  df_test <- rbind(df_test,c(text,tag))
+}
+
+df_test <- df_test %>%
+  filter(str_detect(tag,"strong")==FALSE)%>%
+  filter(str_detect(tag,"<em>")==FALSE)%>%
+  filter(str_detect(tag,"<aside")==FALSE)%>%
+  filter(str_detect(tag,"<figure")==FALSE)
+
+# create string to concatenate text between headers
+text_between_headers <- ""
+
+#create separate index for data frame that holds the post headers, so that we can assign the concatenated content to the correct row.
+post_headers_df_index <- 1
+
+
+for(i in 1:dim(df_test)[1]){
+  if(str_detect(df_test[i,"tag"],"h2")==FALSE & str_length(df_test[i,"tag"])>0){
+    print(df_test[i,"text"])
+    text_between_headers <- c(text_between_headers,df_test[i,"text"])
+    }
+  else{
+    #print(text_between_headers)
+    post_headers[post_headers_df_index,"text"] <- text_between_headers%>%toString
+    post_headers_df_index <- post_headers_df_index + 1
+    text_between_headers <- ""
+    }
+}
+
+usa_today_df <- post_headers
+usa_today_df
+
+# so that the analysis can be run even if the site is taken down
+# saveRDS(usa_today_df,"USA Today News Source")
+
+```
+
+
+The three news sources are now in tidy format, and ready for text analysis! Before we begin, we'll need to bring these news sources into one data frame 
+
+```{r}
+library(tidytext)
+# tokenize the text from fox news articles into individual words
+all_sources_df <- fox_df %>%
+  rbind(.,nbc_df)%>%
+  rbind(.,usa_today_df)%>%
+  unnest_tokens(input = text, output = word)
+  
+
+all_sources_df
+
+```
+
+Lets take a look at the term frequencies for each news source. This will help us begin to quantify the live feeds and understand how often words are used
+```{r}
+
+all_sources_df %>%
+  count(source,word,sort=TRUE,name="count")
+
+```
+The above results may not appear as interesting. All of the top word counts are commonly used terms in the english language, some being prepositions and others adjectives, and do not provide us with much value in our analysis. Let’s look at the distribution of count/total (term frequency) for each news source. The count of words that appears in each source divided by the total number of terms (words) in that source is by definition what term frequency is. Plotting the frequency distributions will show us how many common and rare words are contained in our news sources.
+
+```{r}
+
+# create data frame of word counts by source
+all_sources_word_counts <-
+all_sources_df %>%
+  count(source,word,sort=TRUE,name="count")
+
+# create data frame of the total word count by source
+all_sources_total_counts <- 
+  all_sources_df %>%
+  count(source,name="total")
+
+# left join total word counts onto 'all sources word counts data frame'
+# this will allow us to explort the distribution of term frequencies for each source
+source_distributions <- all_sources_word_counts %>%
+  left_join(all_sources_total_counts,by ="source")
+
+# plot distributions using a histogram
+source_distributions%>%
+  ggplot(aes(x = count/total, fill = source))+
+  geom_histogram()+
+  facet_wrap(~source, ncol = 2,scale="free")
+
+```
+Each source has relatively shorter tailed distributions, which tells us that there are some words considered rare in the text. A general interpretation of distributions is that longer tailing to right indicates the presence of more rare terms, while the taller bars condensed to the left shows that there are common words that appear more frequently. 
+
+Later in this analysis we will revisit what some of those rarer words are. 
+
+According to Julia Silge and David Robinson in their book Tidy Text Mining, 
+
+"Distributions like those shown above are typical in language. In fact, those types of long-tailed distributions are so common in any given corpus of natural language (like a book, or a lot of text from a website, or spoken words) that the relationship between the frequency that a word is used and its rank has been the subject of study; a classic version of this relationship is called Zipf’s law, after George Zipf, a 20th century American linguist.
+
+Zipf’s law states that the frequency that a word appears is inversely proportional to its rank."
+
+
+Since we already have our word counts sorted in descending order, we can add two more columns, rank and term frequency to our data frame, and plot the term frequency against rank for each news source to show how our extract text holds up to Zipf's law.
+
+```{r}
+# create a data frame using source distributions df as our base, adding the columns mentioned above.  
+frequency_by_rank <- 
+source_distributions%>%
+  group_by(source)%>%
+  mutate(term_frequency = round(count/total,3),
+         rank = row_number())%>%
+  ungroup()
+
+# test print nbc to ensure ranking is correct
+frequency_by_rank%>%
+  filter(source =="nbc")
+```
+According to Silge and Robinson, "Zipf’s law is often visualized by plotting rank on the x-axis and term frequency on the y-axis, on logarithmic scales. Plotting this way, an inversely proportional relationship will have a constant, negative slope."
+
+Using their expertise as our guide, we will do the same
+```{r}
+
+# plot term frequency against rank on a logarithmic scale
+frequency_by_rank %>% 
+  ggplot(aes(rank, term_frequency, color = source)) + 
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE)+
+  scale_x_log10()+
+  scale_y_log10()
+
+```
+Based on the plot, we can see that all 3 news sources are similar, and that term frequency and rank have a negative slope for their relationship. However, the slope is not constant especially as we travel towards the lower term frequencies. From rank 1 ~ 100 we can see that Zipf's law holds pretty well. One thing we could do is obtain the slope of this sub-section of ranks, and compare it to classic Zipf's law:
+
+frequency ∝ 1 / rank
+
+(∝ means ‘is proportional to’, and is used to show something that varies in relation to something else.)
+
+```{r}
+rank_subset <- frequency_by_rank %>% 
+  filter(rank < 100,
+         rank > 1)
+
+lm(log10(term_frequency) ~ log10(rank), data = rank_subset)
+
+```
+The linear model fit to term_frequency and rank shows a slope of -.90, which is pretty close to 1! Let's plot the fitted line on the same chart previously plotted.
+
+
+```{r}
+frequency_by_rank %>% 
+  ggplot(aes(rank, term_frequency, color = source)) + 
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE)+
+  geom_abline(slope = -.9049,intercept = -1.0638,linetype=2)+
+  scale_x_log10()+
+  scale_y_log10()
+
+```
+A couple of thoughts on Zipf's law. We've seen that our results are similar to the classic version of Zipf's law, with a slope close to -1 for our log ranks and term frequencies. However, there is an unusual observation to note about deviations on the higher rank. According to Silge and Robinson, corpus of language often have fewer rare words than what is predicted by a single power law, but in this case there are more. In the following section we will begin to uncover what these words are when we implement tf-idf to measure how word importance to our news sources. 
+
+#word to eliminate
+#usa today
+ana
+faguy
+go
+where
+don't
+mark
+
+#word to eliminate
+#fox
+click
+fox
+read
+
+#word to eliminate
+#nbc
+g
+nbc
+last
+
+```{r}
+source_distributions%>%
+  bind_tf_idf(word,source,count)%>%
+  arrange(desc(tf_idf))%>%
+  filter(source=="usa today")
+
+source_distributions%>%
+  bind_tf_idf(word,source,count)%>%
+  arrange(desc(tf_idf))%>%
+  filter(source=="fox")
+
+source_distributions%>%
+  bind_tf_idf(word,source,count)%>%
+  arrange(desc(tf_idf))%>%
+  filter(source=="nbc")
+
+source_distributions%>%
+  bind_tf_idf(word,source,count)%>%
+  arrange(desc(tf_idf))
+
+# create stop word list to filter out words before visualizing 
+source_stop_words <- c("click","fox","read","g","nbc","last","mark","don't","where","go","anastasiia","fujimoto","da","see","must","chantal","ayumi","faguy","ana","video","note","per","we'll")
+
+```
+
+
+
+
+```{r,fig.height=8, fig.width=8}
+# plot the top words, by tf idf and news source
+source_distributions%>%
+  bind_tf_idf(word,source,count)%>%
+  arrange(desc(tf_idf))%>%
+  filter(!(word %in% source_stop_words))%>%
+  group_by(source)%>%
+  dplyr::slice_max(n = 15,order_by = tf_idf,with_ties = FALSE)%>%
+  ungroup()%>%
+  ggplot(aes(x = tf_idf,y=fct_reorder(word,tf_idf),fill = source))+
+  geom_col()+
+  facet_wrap(~source,ncol = 1,scale="free")+
+  theme(text = element_text(size=20))+
+  labs(x="Tf-Idf",y = NULL, title = "Tf-Idf by News Source")
+
+```
+
+```{r}
+# show which articles/ posts mention access
+fox_df[str_detect(fox_df$text,"access"),]$text
+
+# show which articles/posts mention Istanbul
+nbc_df[str_detect(nbc_df$text,"Istanbul"),]$text
+
+# show which articles/ posts mention trade
+usa_today_df[str_detect(usa_today_df$text,"trade"),]$text
+```
