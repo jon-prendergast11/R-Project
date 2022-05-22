@@ -1,9 +1,9 @@
 # R-Projects
 
 ### Project Reference Table
-| Project Type | Description |
-| ----------- | ----------- |
-| Newsfeed Web Scrape/ Text Mining| Involves scraping several newsfeeds in order to gather sentiments from each news source. News sources were scraped early on in the Russia-Ukraine conflict (see Web Scrape into Text Analysis .Rmd file)|
+| Project Type | Description | Files|
+| ----------- | ----------- |----------- |
+| Newsfeed Web Scrape/ Text Mining| Involves scraping several newsfeeds in order to gather sentiments from each news source. News sources were scraped early on in the Russia-Ukraine conflict|Web-scrape-into-text-analyis.rmd, FOX News Source, NBC News Source, USA Today News Source
 
 
 #### short term goals
